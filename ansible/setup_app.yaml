@@ -1,0 +1,111 @@
+---
+- name: Setup app
+  become: yes
+  hosts: all
+
+
+  tasks:
+    - name: Create app user
+      user:
+        name: appuser
+        shell: /bin/bash
+        create_home: yes
+        group: sudo
+
+    - name: Create app group
+      become: yes
+      group:
+        name: appuser
+
+    - name: Add SSH key to 'appuser'
+      authorized_key:
+        user: appuser
+        state: present
+        key: "{{ lookup('file', pub_key) }}"
+
+# START just to solve the apt-get being used by auto updates
+
+    - name: Disable timers for unattended upgrade, so that none will be triggered by the `date -s` call.
+      raw: systemctl disable --now {{item}}
+      with_items:
+        - 'apt-daily.timer'
+        - 'apt-daily-upgrade.timer'
+
+    - name: Reload systemctl daemon to apply the new changes
+      raw: systemctl daemon-reload
+
+    # Syncing time is only relevant for testing, because of the VM's outdated date.
+    #- name: Sync time
+    #  raw: date -s "{{ lookup('pipe', 'date') }}"
+
+    - name: Wait for any possibly running unattended upgrade to finish
+      raw: systemd-run --property="After=apt-daily.service apt-daily-upgrade.service" --wait /bin/true
+
+    - name: Purge unattended upgrades
+      raw: apt-get -y purge unattended-upgrades
+
+    - name: Update apt cache
+      raw: apt-get -y update
+
+# END just to solve the apt-get being used by auto updates
+
+    - name: Install required packages
+      apt:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - python3-pip
+        - python3-venv
+        - nginx
+
+    - name: Copy main.py to server
+      copy:
+        src: "./main.py"
+        dest: "/home/appuser/main.py"
+
+    - name: Install Python dependencies
+      pip:
+        name:
+          - fastapi
+          - uvicorn
+          - gunicorn
+
+    - name: Configure Gunicorn service
+      template:
+        src: "./gunicorn.service.j2"
+        dest: /etc/systemd/system/gunicorn.service
+      notify:
+        - Restart Gunicorn
+
+    - name: Configure Nginx
+      template:
+        src: "./nginx.conf.j2"
+        dest: /etc/nginx/sites-available/app
+
+    - name: Delete default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Create symlink to enable site
+      file:
+        src: /etc/nginx/sites-available/app
+        dest: /etc/nginx/sites-enabled/app
+        state: link
+      notify:
+        - Restart Nginx
+
+  handlers:
+    - name: Restart Gunicorn
+      systemd:
+        name: gunicorn
+        state: restarted
+
+    - name: Restart Nginx
+      systemd:
+        name: nginx
+        state: restarted
+
+  vars:
+    ansible_user: root  # Username to connect to the server
+    ansible_ssh_private_key_file: /home/vldmr/.ssh/id_rsa  # Path to the private SSH key

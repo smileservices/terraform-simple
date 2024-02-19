@@ -1,0 +1,3 @@
+pvt_key = "{path to your private key}"
+pub_key = "{path to your public key}"
+do_token = "{digital ocean token"

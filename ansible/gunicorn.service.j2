@@ -1,0 +1,15 @@
+[Unit]
+Description=Gunicorn instance to serve App
+After=network.target
+
+[Service]
+User=appuser
+Group=appuser
+WorkingDirectory=/home/appuser
+ExecStart=/usr/local/bin/gunicorn -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 main:app
+Restart=always
+StandardOutput=/var/log/gunicorn
+StandardError=/var/log/gunicorn-error
+
+[Install]
+WantedBy=multi-user.target
